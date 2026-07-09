@@ -60,23 +60,58 @@ else:
     df, dati_live, c_usd, c_chf = scarica_dati_mercato()
 
     def calcola_valori(row):
-        spot = dati_live.get(row['ticker'], row['pmc'])
-        if np.isnan(spot) or spot == 0: spot = row['pmc']
+        spot_live = dati_live.get(row['ticker'], row['pmc'])
+        if np.isnan(spot_live) or spot_live == 0: 
+            spot_live = row['pmc']
         
-        ctv_originale = row['q'] * spot
-        if row['valuta'] == 'USD': ctv_eur = ctv_originale / c_usd
-        elif row['valuta'] == 'CHF': ctv_eur = ctv_originale / c_chf
-        else: ctv_eur = ctv_originale
-            
-        perf = ((spot - row['pmc']) / row['pmc']) * 100
-        return pd.Series([ctv_eur, spot, perf])
+        # --- CONVERSIONE PREZZI IN EUR ---
+        # Converti il prezzo spot nella valuta originale se necessario
+        if row['valuta'] == 'USD':
+            spot_eur = spot_live / c_usd
+            pmc_eur = row['pmc']  # PMC è già in USD, convertiamo dopo
+        elif row['valuta'] == 'CHF':
+            spot_eur = spot_live / c_chf
+            pmc_eur = row['pmc']  # PMC è già in CHF, convertiamo dopo
+        else:  # EUR
+            spot_eur = spot_live
+            pmc_eur = row['pmc']
+        
+        # --- CALCOLO CONTROVALORE IN EUR ---
+        ctv_eur = row['q'] * spot_eur
+        
+        # --- CALCOLO INVESTIMENTO INIZIALE IN EUR ---
+        if row['valuta'] == 'USD':
+            inv_iniziale = row['q'] * row['pmc'] / c_usd
+            pmc_display_eur = row['pmc'] / c_usd
+        elif row['valuta'] == 'CHF':
+            inv_iniziale = row['q'] * row['pmc'] / c_chf
+            pmc_display_eur = row['pmc'] / c_chf
+        else:  # EUR
+            inv_iniziale = row['q'] * row['pmc']
+            pmc_display_eur = row['pmc']
+        
+        # --- PERFORMANCE IN %
+        perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
+        
+        return pd.Series([ctv_eur, spot_eur, pmc_display_eur, inv_iniziale, perf])
 
-    df[['Capitale_EUR', 'Spot_Live', 'Performance_%']] = df.apply(calcola_valori, axis=1)
+    df[['Capitale_EUR', 'Spot_EUR', 'PMC_EUR', 'Investimento_Iniziale_EUR', 'Performance_%']] = df.apply(calcola_valori, axis=1)
     df['Peso_%'] = (df['Capitale_EUR'] / VALORE_TOTALE_PORTAFOGLIO_EUR) * 100
+    df['Gain_Loss_EUR'] = df['Capitale_EUR'] - df['Investimento_Iniziale_EUR']
 
     # --- INTERFACCIA GRAFICA MOBILE ---
     st.title("💼 Centrale Operativa Live v2.0")
-    st.metric(label="Controvalore Totale Monitorato", value=f"{df['Capitale_EUR'].sum():,.2f} EUR")
+    
+    # Metriche principali
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(label="Controvalore Totale", value=f"{df['Capitale_EUR'].sum():,.2f} EUR")
+    with col2:
+        inv_tot = df['Investimento_Iniziale_EUR'].sum()
+        st.metric(label="Investimento Iniziale", value=f"{inv_tot:,.2f} EUR")
+    with col3:
+        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100
+        st.metric(label="Performance Totale", value=f"{perf_totale:+.2f}%")
     
     if st.button("🔐 Blocca / Esci"):
         st.session_state["autenticato"] = False
@@ -84,11 +119,15 @@ else:
         
     st.write("---")
     
-    st.subheader("📋 Griglia Asset Real-Time")
-    df_vis = df[['ticker', 'nome', 'Spot_Live', 'Performance_%', 'Peso_%']].copy()
-    df_vis['Performance_%'] = df_vis['Performance_%'].map('{:+.2f}%'.format)
-    df_vis['Peso_%'] = df_vis['Peso_%'].map('{:.2f}%'.format)
-    st.dataframe(df_vis.sort_values(by="ticker"), use_container_width=True, hide_index=True)
+    st.subheader("📋 Griglia Asset Real-Time (Tutti i prezzi in EUR)")
+    df_vis = df[['ticker', 'nome', 'PMC_EUR', 'Spot_EUR', 'Capitale_EUR', 'Performance_%', 'Peso_%']].copy()
+    df_vis.columns = ['Ticker', 'Nome', 'PMC (EUR)', 'Prezzo Live (EUR)', 'Controvalore (EUR)', 'Performance %', 'Peso %']
+    df_vis['PMC (EUR)'] = df_vis['PMC (EUR)'].map('{:.2f}'.format)
+    df_vis['Prezzo Live (EUR)'] = df_vis['Prezzo Live (EUR)'].map('{:.2f}'.format)
+    df_vis['Controvalore (EUR)'] = df_vis['Controvalore (EUR)'].map('{:,.2f}'.format)
+    df_vis['Performance %'] = df_vis['Performance %'].map('{:+.2f}%'.format)
+    df_vis['Peso %'] = df_vis['Peso %'].map('{:.2f}%'.format)
+    st.dataframe(df_vis.sort_values(by="Ticker"), use_container_width=True, hide_index=True)
     
     st.write("---")
     st.subheader("🎯 Analisi Istituzionale & Verdetto")
@@ -97,20 +136,20 @@ else:
     
     # Simulazione dinamica dei livelli monetari agganciati allo spot live
     net_flow_sim = 245000.0 if asset['ticker'] in ['INTC', 'OKLO'] else (-15000.0 if asset['ticker'] == 'BABA' else 0.0)
-    max_pain_sim = asset['Spot_Live'] * 1.01 if asset['ticker'] in ['INTC', 'OKLO'] else asset['Spot_Live']
+    max_pain_sim = asset['Spot_EUR'] * 1.01 if asset['ticker'] in ['INTC', 'OKLO'] else asset['Spot_EUR']
     
     col1, col2 = st.columns(2)
     with col1:
-        st.metric(label="Prezzo di Carico (PMC)", value=f"{asset['pmc']:.2f} {asset['valuta']}")
-        st.metric(label="Ultimo Prezzo Battuto", value=f"{asset['Spot_Live']:.2f} {asset['valuta']}", delta=f"{asset['Performance_%']:.2f}%")
+        st.metric(label="Prezzo di Carico (PMC)", value=f"{asset['PMC_EUR']:.2f} EUR")
+        st.metric(label="Ultimo Prezzo Battuto", value=f"{asset['Spot_EUR']:.2f} EUR", delta=f"{asset['Performance_%']:.2f}%")
     with col2:
-        st.metric(label="Flusso Istituzionale Grandi Taglie", value=f"${net_flow_sim:,.2f}" if asset['valuta'] == 'USD' else f"€{net_flow_sim:,.2f}")
-        st.metric(label="Distanza da Area Max Pain", value=f"Sotto il Muro" if asset['Spot_Live'] < max_pain_sim else f"In Equilibrio")
+        st.metric(label="Controvalore Posizione", value=f"€{asset['Capitale_EUR']:,.2f}")
+        st.metric(label="Gain/Loss", value=f"€{asset['Gain_Loss_EUR']:+,.2f}")
 
     st.markdown("**Verdetto Cervello Strategico:**")
     if asset['tipo'] == 'ETC/Leva' and asset['ticker'] == 'AG3L.MI':
         st.error("⚠️ ALERT DECAY ATTIVO: Il titolo si trova in una struttura laterale prolungata. Il decadimento da volatilità sta erodendo il valore temporale della leva giornaliera. Valutare alleggerimento protettivo tattico.")
-    elif net_flow_sim > 100000 and asset['Spot_Live'] < asset['pmc']:
+    elif net_flow_sim > 100000 and asset['Spot_EUR'] < asset['PMC_EUR']:
         st.success("🟢 STRATEGIA: MOLLA CARICA. Le balene stanno assorbendo la lettera sul book. Gli acquisti istituzionali grandi taglie proteggono il trend sotto il livello di Max Pain delle opzioni. Mantenere salda la posizione.")
     elif asset['Performance_%'] > 15.0:
         st.warning("🔄 ROTAZIONE SETTORIALE: Il titolo ha quasi saturato la spinta volumetrica istituzionale della scadenza attuale. L'algoritmo suggerisce di liquidare una quota per prelevare profitto e ruotarlo su asset compressi in fase di accumulo.")
