@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import requests
 import yfinance as yf
+from datetime import datetime
 
 # Configurazione della pagina ottimizzata per smartphone
 st.set_page_config(layout="wide", page_title="Centrale Volumetrica 2.0")
@@ -22,39 +24,55 @@ if not st.session_state["autenticato"]:
 else:
     # --- MOTORE CONFIGURAZIONE DATI REAL ---
     VALORE_TOTALE_PORTAFOGLIO_EUR = 377036.06
+    FINNHUB_API_KEY = st.secrets.get("FINNHUB_API_KEY", "default_key")  # Configura in .streamlit/secrets.toml
     
-    @st.cache_data(ttl=300)  # Aggiorna i dati ogni 5 minuti se si ricarica la pagina
+    @st.cache_data(ttl=300)  # Aggiorna i dati ogni 5 minuti
     def scarica_dati_mercato():
         df_base = pd.DataFrame([
-            {"ticker": "INTC", "nome": "Intel Corp.", "tipo": "Azione", "q": 550, "pmc": 118.84, "valuta": "USD"},
-            {"ticker": "BABA", "nome": "Alibaba Group Holding Ltd", "tipo": "Azione", "q": 400, "pmc": 95.02, "valuta": "USD"},
-            {"ticker": "NVDA", "nome": "Nvidia Corp", "tipo": "Azione", "q": 300, "pmc": 183.20, "valuta": "EUR"},
-            {"ticker": "OKLO", "nome": "Oklo Inc.", "tipo": "Azione", "q": 350, "pmc": 62.17, "valuta": "USD"},
-            {"ticker": "CCJ",  "nome": "Cameco Corp.", "tipo": "Azione", "q": 150, "pmc": 98.07, "valuta": "EUR"},
-            {"ticker": "SPCX", "nome": "Space Exploration Technologies", "tipo": "Azione", "q": 80, "pmc": 151.10, "valuta": "USD"},
-            {"ticker": "MSFT", "nome": "Microsoft Corporation", "tipo": "Azione", "q": 50, "pmc": 371.46, "valuta": "USD"},
-            {"ticker": "VATN.SW", "nome": "Vat Group N", "tipo": "Azione", "q": 15, "pmc": 581.83, "valuta": "CHF"},
-            {"ticker": "BITM", "nome": "Bitmine Immersion Tec.new", "tipo": "Azione", "q": 500, "pmc": 18.68, "valuta": "EUR"},
-            {"ticker": "COSM", "nome": "Cosmo N.v.", "tipo": "Azione", "q": 50, "pmc": 88.60, "valuta": "EUR"},
-            {"ticker": "URNM.MI", "nome": "VanEck Uranium UCITS", "tipo": "ETF", "q": 1152, "pmc": 52.92, "valuta": "EUR"},
-            {"ticker": "INRG.MI", "nome": "iShares Global Clean Energy", "tipo": "ETF", "q": 2800, "pmc": 10.41, "valuta": "EUR"},
-            {"ticker": "EMDV.MI", "nome": "WisdomTree Emerging Markets", "tipo": "ETF", "q": 500, "pmc": 27.75, "valuta": "EUR"},
-            {"ticker": "CX50.MI", "nome": "Invesco ChinaNex 50 UCITS", "tipo": "ETF", "q": 600, "pmc": 11.71, "valuta": "EUR"},
-            {"ticker": "SMCX.MI", "nome": "SPDR MSCI Europe Consumer", "tipo": "ETF", "q": 50, "pmc": 226.54, "valuta": "EUR"},
-            {"ticker": "BNK.MI",  "nome": "WisdomTree FTSE MIB Banks", "tipo": "ETC/Leva", "q": 900, "pmc": 15.39, "valuta": "EUR"},
-            {"ticker": "E50.MI",  "nome": "WisdomTree Euro Stoxx 50", "tipo": "ETC/Leva", "q": 300, "pmc": 42.48, "valuta": "EUR"},
-            {"ticker": "AG3L.MI", "nome": "WisdomTree Silver 3x Daily", "tipo": "ETC/Leva", "q": 1150, "pmc": 12.70, "valuta": "EUR"}
+            {"ticker": "INTC", "nome": "Intel Corp.", "tipo": "Azione", "q": 550, "pmc": 118.84, "valuta": "USD", "simbolo_finnhub": "INTC"},
+            {"ticker": "BABA", "nome": "Alibaba Group Holding Ltd", "tipo": "Azione", "q": 400, "pmc": 95.02, "valuta": "USD", "simbolo_finnhub": "BABA"},
+            {"ticker": "NVDA", "nome": "Nvidia Corp", "tipo": "Azione", "q": 300, "pmc": 183.20, "valuta": "EUR", "simbolo_finnhub": "NVDA"},
+            {"ticker": "OKLO", "nome": "Oklo Inc.", "tipo": "Azione", "q": 350, "pmc": 62.17, "valuta": "USD", "simbolo_finnhub": "OKLO"},
+            {"ticker": "CCJ",  "nome": "Cameco Corp.", "tipo": "Azione", "q": 150, "pmc": 98.07, "valuta": "EUR", "simbolo_finnhub": "CCJ"},
+            {"ticker": "SPCX", "nome": "Space Exploration Technologies", "tipo": "Azione", "q": 80, "pmc": 151.10, "valuta": "USD", "simbolo_finnhub": "SPCX"},
+            {"ticker": "MSFT", "nome": "Microsoft Corporation", "tipo": "Azione", "q": 50, "pmc": 371.46, "valuta": "USD", "simbolo_finnhub": "MSFT"},
+            {"ticker": "VATN.SW", "nome": "Vat Group N", "tipo": "Azione", "q": 15, "pmc": 581.83, "valuta": "CHF", "simbolo_finnhub": "VATN.SW"},
+            {"ticker": "BITM", "nome": "Bitmine Immersion Tec.new", "tipo": "Azione", "q": 500, "pmc": 18.68, "valuta": "EUR", "simbolo_finnhub": "BITM.SW"},
+            {"ticker": "COSM", "nome": "Cosmo N.v.", "tipo": "Azione", "q": 50, "pmc": 88.60, "valuta": "EUR", "simbolo_finnhub": "COSM.MI"},
+            {"ticker": "URNM.MI", "nome": "VanEck Uranium UCITS", "tipo": "ETF", "q": 1152, "pmc": 52.92, "valuta": "EUR", "simbolo_finnhub": "URNM.MI"},
+            {"ticker": "INRG.MI", "nome": "iShares Global Clean Energy", "tipo": "ETF", "q": 2800, "pmc": 10.41, "valuta": "EUR", "simbolo_finnhub": "INRG.MI"},
+            {"ticker": "EMDV.MI", "nome": "WisdomTree Emerging Markets", "tipo": "ETF", "q": 500, "pmc": 27.75, "valuta": "EUR", "simbolo_finnhub": "EMDV.MI"},
+            {"ticker": "CX50.MI", "nome": "Invesco ChinaNex 50 UCITS", "tipo": "ETF", "q": 600, "pmc": 11.71, "valuta": "EUR", "simbolo_finnhub": "CX50.MI"},
+            {"ticker": "SMCX.MI", "nome": "SPDR MSCI Europe Consumer", "tipo": "ETF", "q": 50, "pmc": 226.54, "valuta": "EUR", "simbolo_finnhub": "SMCX.MI"},
+            {"ticker": "BNK.MI",  "nome": "WisdomTree FTSE MIB Banks", "tipo": "ETC/Leva", "q": 900, "pmc": 15.39, "valuta": "EUR", "simbolo_finnhub": "BNK.MI"},
+            {"ticker": "E50.MI",  "nome": "WisdomTree Euro Stoxx 50", "tipo": "ETC/Leva", "q": 300, "pmc": 42.48, "valuta": "EUR", "simbolo_finnhub": "E50.MI"},
+            {"ticker": "AG3L.MI", "nome": "WisdomTree Silver 3x Daily", "tipo": "ETC/Leva", "q": 1150, "pmc": 12.70, "valuta": "EUR", "simbolo_finnhub": "AG3L.MI"}
         ])
         
-        tickers = df_base['ticker'].tolist()
+        # Scarica i tassi di cambio
         try:
             cambio_usd = yf.Ticker("EURUSD=X").fast_info['lastPrice']
             cambio_chf = yf.Ticker("EURCHF=X").fast_info['lastPrice']
-            prezzi_live = yf.download(tickers, period="1d", progress=False)['Close'].iloc[-1].to_dict()
         except:
             cambio_usd, cambio_chf = 1.1440, 0.9224
-            prezzi_live = {}
-            
+        
+        # Scarica i prezzi da Finnhub
+        prezzi_live = {}
+        for idx, row in df_base.iterrows():
+            try:
+                url = f"https://finnhub.io/api/v1/quote?symbol={row['simbolo_finnhub']}&token={FINNHUB_API_KEY}"
+                response = requests.get(url, timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    if 'c' in data and data['c'] > 0:
+                        prezzi_live[row['ticker']] = data['c']
+                    else:
+                        prezzi_live[row['ticker']] = row['pmc']
+                else:
+                    prezzi_live[row['ticker']] = row['pmc']
+            except:
+                prezzi_live[row['ticker']] = row['pmc']
+        
         return df_base, prezzi_live, cambio_usd, cambio_chf
 
     df, dati_live, c_usd, c_chf = scarica_dati_mercato()
@@ -65,13 +83,12 @@ else:
             spot_live = row['pmc']
         
         # --- CONVERSIONE PREZZI IN EUR ---
-        # Converti il prezzo spot nella valuta originale se necessario
         if row['valuta'] == 'USD':
             spot_eur = spot_live / c_usd
-            pmc_eur = row['pmc']  # PMC è già in USD, convertiamo dopo
+            pmc_eur = row['pmc'] / c_usd
         elif row['valuta'] == 'CHF':
             spot_eur = spot_live / c_chf
-            pmc_eur = row['pmc']  # PMC è già in CHF, convertiamo dopo
+            pmc_eur = row['pmc'] / c_chf
         else:  # EUR
             spot_eur = spot_live
             pmc_eur = row['pmc']
@@ -80,20 +97,15 @@ else:
         ctv_eur = row['q'] * spot_eur
         
         # --- CALCOLO INVESTIMENTO INIZIALE IN EUR ---
-        if row['valuta'] == 'USD':
-            inv_iniziale = row['q'] * row['pmc'] / c_usd
-            pmc_display_eur = row['pmc'] / c_usd
-        elif row['valuta'] == 'CHF':
-            inv_iniziale = row['q'] * row['pmc'] / c_chf
-            pmc_display_eur = row['pmc'] / c_chf
-        else:  # EUR
-            inv_iniziale = row['q'] * row['pmc']
-            pmc_display_eur = row['pmc']
+        inv_iniziale = row['q'] * pmc_eur
         
         # --- PERFORMANCE IN %
-        perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
+        if inv_iniziale > 0:
+            perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
+        else:
+            perf = 0
         
-        return pd.Series([ctv_eur, spot_eur, pmc_display_eur, inv_iniziale, perf])
+        return pd.Series([ctv_eur, spot_eur, pmc_eur, inv_iniziale, perf])
 
     df[['Capitale_EUR', 'Spot_EUR', 'PMC_EUR', 'Investimento_Iniziale_EUR', 'Performance_%']] = df.apply(calcola_valori, axis=1)
     df['Peso_%'] = (df['Capitale_EUR'] / VALORE_TOTALE_PORTAFOGLIO_EUR) * 100
@@ -110,7 +122,7 @@ else:
         inv_tot = df['Investimento_Iniziale_EUR'].sum()
         st.metric(label="Investimento Iniziale", value=f"{inv_tot:,.2f} EUR")
     with col3:
-        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100
+        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100 if inv_tot > 0 else 0
         st.metric(label="Performance Totale", value=f"{perf_totale:+.2f}%")
     
     if st.button("🔐 Blocca / Esci"):
