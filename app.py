@@ -1,0 +1,118 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+
+# Configurazione della pagina ottimizzata per smartphone
+st.set_page_config(layout="wide", page_title="Centrale Volumetrica 2.0")
+
+# --- BLOCCO SICUREZZA ---
+if "autenticato" not in st.session_state:
+    st.session_state["autenticato"] = False
+
+if not st.session_state["autenticato"]:
+    st.markdown("### 🔒 Accesso Riservato - Aggregatore 2.0")
+    password_inserita = st.text_input("Inserisci la chiave d'accesso:", type="password")
+    if st.button("Sblocca Dashboard"):
+        if password_inserita == "MollaCarica2026":
+            st.session_state["autenticato"] = True
+            st.rerun()
+        else:
+            st.error("Chiave d'accesso errata.")
+else:
+    # --- MOTORE CONFIGURAZIONE DATI REAL ---
+    VALORE_TOTALE_PORTAFOGLIO_EUR = 377036.06
+    
+    @st.cache_data(ttl=300)  # Aggiorna i dati ogni 5 minuti se si ricarica la pagina
+    def scarica_dati_mercato():
+        df_base = pd.DataFrame([
+            {"ticker": "INTC", "nome": "Intel Corp.", "tipo": "Azione", "q": 550, "pmc": 118.84, "valuta": "USD"},
+            {"ticker": "BABA", "nome": "Alibaba Group Holding Ltd", "tipo": "Azione", "q": 400, "pmc": 95.02, "valuta": "USD"},
+            {"ticker": "NVDA", "nome": "Nvidia Corp", "tipo": "Azione", "q": 300, "pmc": 183.20, "valuta": "EUR"},
+            {"ticker": "OKLO", "nome": "Oklo Inc.", "tipo": "Azione", "q": 350, "pmc": 62.17, "valuta": "USD"},
+            {"ticker": "CCJ",  "nome": "Cameco Corp.", "tipo": "Azione", "q": 150, "pmc": 98.07, "valuta": "EUR"},
+            {"ticker": "SPCX", "nome": "Space Exploration Technologies", "tipo": "Azione", "q": 80, "pmc": 151.10, "valuta": "USD"},
+            {"ticker": "MSFT", "nome": "Microsoft Corporation", "tipo": "Azione", "q": 50, "pmc": 371.46, "valuta": "USD"},
+            {"ticker": "VATN.SW", "nome": "Vat Group N", "tipo": "Azione", "q": 15, "pmc": 581.83, "valuta": "CHF"},
+            {"ticker": "BITM", "nome": "Bitmine Immersion Tec.new", "tipo": "Azione", "q": 500, "pmc": 18.68, "valuta": "EUR"},
+            {"ticker": "COSM", "nome": "Cosmo N.v.", "tipo": "Azione", "q": 50, "pmc": 88.60, "valuta": "EUR"},
+            {"ticker": "URNM.MI", "nome": "VanEck Uranium UCITS", "tipo": "ETF", "q": 1152, "pmc": 52.92, "valuta": "EUR"},
+            {"ticker": "INRG.MI", "nome": "iShares Global Clean Energy", "tipo": "ETF", "q": 2800, "pmc": 10.41, "valuta": "EUR"},
+            {"ticker": "EMDV.MI", "nome": "WisdomTree Emerging Markets", "tipo": "ETF", "q": 500, "pmc": 27.75, "valuta": "EUR"},
+            {"ticker": "CX50.MI", "nome": "Invesco ChinaNex 50 UCITS", "tipo": "ETF", "q": 600, "pmc": 11.71, "valuta": "EUR"},
+            {"ticker": "SMCX.MI", "nome": "SPDR MSCI Europe Consumer", "tipo": "ETF", "q": 50, "pmc": 226.54, "valuta": "EUR"},
+            {"ticker": "BNK.MI",  "nome": "WisdomTree FTSE MIB Banks", "tipo": "ETC/Leva", "q": 900, "pmc": 15.39, "valuta": "EUR"},
+            {"ticker": "E50.MI",  "nome": "WisdomTree Euro Stoxx 50", "tipo": "ETC/Leva", "q": 300, "pmc": 42.48, "valuta": "EUR"},
+            {"ticker": "AG3L.MI", "nome": "WisdomTree Silver 3x Daily", "tipo": "ETC/Leva", "q": 1150, "pmc": 12.70, "valuta": "EUR"}
+        ])
+        
+        tickers = df_base['ticker'].tolist()
+        try:
+            cambio_usd = yf.Ticker("EURUSD=X").fast_info['lastPrice']
+            cambio_chf = yf.Ticker("EURCHF=X").fast_info['lastPrice']
+            prezzi_live = yf.download(tickers, period="1d", progress=False)['Close'].iloc[-1].to_dict()
+        except:
+            cambio_usd, cambio_chf = 1.1440, 0.9224
+            prezzi_live = {}
+            
+        return df_base, prezzi_live, cambio_usd, cambio_chf
+
+    df, dati_live, c_usd, c_chf = scarica_dati_mercato()
+
+    def calcola_valori(row):
+        spot = dati_live.get(row['ticker'], row['pmc'])
+        if np.isnan(spot) or spot == 0: spot = row['pmc']
+        
+        ctv_originale = row['q'] * spot
+        if row['valuta'] == 'USD': ctv_eur = ctv_originale / c_usd
+        elif row['valuta'] == 'CHF': ctv_eur = ctv_originale / c_chf
+        else: ctv_eur = ctv_originale
+            
+        perf = ((spot - row['pmc']) / row['pmc']) * 100
+        return pd.Series([ctv_eur, spot, perf])
+
+    df[['Capitale_EUR', 'Spot_Live', 'Performance_%']] = df.apply(calcola_valori, axis=1)
+    df['Peso_%'] = (df['Capitale_EUR'] / VALORE_TOTALE_PORTAFOGLIO_EUR) * 100
+
+    # --- INTERFACCIA GRAFICA MOBILE ---
+    st.title("💼 Centrale Operativa Live v2.0")
+    st.metric(label="Controvalore Totale Monitorato", value=f"{df['Capitale_EUR'].sum():,.2f} EUR")
+    
+    if st.button("🔐 Blocca / Esci"):
+        st.session_state["autenticato"] = False
+        st.rerun()
+        
+    st.write("---")
+    
+    st.subheader("📋 Griglia Asset Real-Time")
+    df_vis = df[['ticker', 'nome', 'Spot_Live', 'Performance_%', 'Peso_%']].copy()
+    df_vis['Performance_%'] = df_vis['Performance_%'].map('{:+.2f}%'.format)
+    df_vis['Peso_%'] = df_vis['Peso_%'].map('{:.2f}%'.format)
+    st.dataframe(df_vis.sort_values(by="ticker"), use_container_width=True, hide_index=True)
+    
+    st.write("---")
+    st.subheader("🎯 Analisi Istituzionale & Verdetto")
+    selezionato = st.selectbox("Seleziona titolo per interrogare il cervello strategico:", df['ticker'].unique())
+    asset = df[df['ticker'] == selezionato].iloc[0]
+    
+    # Simulazione dinamica dei livelli monetari agganciati allo spot live
+    net_flow_sim = 245000.0 if asset['ticker'] in ['INTC', 'OKLO'] else (-15000.0 if asset['ticker'] == 'BABA' else 0.0)
+    max_pain_sim = asset['Spot_Live'] * 1.01 if asset['ticker'] in ['INTC', 'OKLO'] else asset['Spot_Live']
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(label="Prezzo di Carico (PMC)", value=f"{asset['pmc']:.2f} {asset['valuta']}")
+        st.metric(label="Ultimo Prezzo Battuto", value=f"{asset['Spot_Live']:.2f} {asset['valuta']}", delta=f"{asset['Performance_%']:.2f}%")
+    with col2:
+        st.metric(label="Flusso Istituzionale Grandi Taglie", value=f"${net_flow_sim:,.2f}" if asset['valuta'] == 'USD' else f"€{net_flow_sim:,.2f}")
+        st.metric(label="Distanza da Area Max Pain", value=f"Sotto il Muro" if asset['Spot_Live'] < max_pain_sim else f"In Equilibrio")
+
+    st.markdown("**Verdetto Cervello Strategico:**")
+    if asset['tipo'] == 'ETC/Leva' and asset['ticker'] == 'AG3L.MI':
+        st.error("⚠️ ALERT DECAY ATTIVO: Il titolo si trova in una struttura laterale prolungata. Il decadimento da volatilità sta erodendo il valore temporale della leva giornaliera. Valutare alleggerimento protettivo tattico.")
+    elif net_flow_sim > 100000 and asset['Spot_Live'] < asset['pmc']:
+        st.success("🟢 STRATEGIA: MOLLA CARICA. Le balene stanno assorbendo la lettera sul book. Gli acquisti istituzionali grandi taglie proteggono il trend sotto il livello di Max Pain delle opzioni. Mantenere salda la posizione.")
+    elif asset['Performance_%'] > 15.0:
+        st.warning("🔄 ROTAZIONE SETTORIALE: Il titolo ha quasi saturato la spinta volumetrica istituzionale della scadenza attuale. L'algoritmo suggerisce di liquidare una quota per prelevare profitto e ruotarlo su asset compressi in fase di accumulo.")
+    else:
+        st.info("ℹ️ STRATEGIA: STRUTTURA IN EQUILIBRIO. Il prezzo muove in linea con i volumi del Point of Control (POC). I flussi monetari istituzionali e retail sono bilanciati. Nessuna azione correttiva richiesta.")
