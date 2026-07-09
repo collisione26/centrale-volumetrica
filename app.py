@@ -65,12 +65,13 @@ else:
             spot_live = row['pmc']
         
         # --- CONVERSIONE PREZZI IN EUR ---
+        # Converti il prezzo spot nella valuta originale se necessario
         if row['valuta'] == 'USD':
             spot_eur = spot_live / c_usd
-            pmc_eur = row['pmc'] / c_usd
+            pmc_eur = row['pmc']  # PMC è già in USD, convertiamo dopo
         elif row['valuta'] == 'CHF':
             spot_eur = spot_live / c_chf
-            pmc_eur = row['pmc'] / c_chf
+            pmc_eur = row['pmc']  # PMC è già in CHF, convertiamo dopo
         else:  # EUR
             spot_eur = spot_live
             pmc_eur = row['pmc']
@@ -79,15 +80,20 @@ else:
         ctv_eur = row['q'] * spot_eur
         
         # --- CALCOLO INVESTIMENTO INIZIALE IN EUR ---
-        inv_iniziale = row['q'] * pmc_eur
+        if row['valuta'] == 'USD':
+            inv_iniziale = row['q'] * row['pmc'] / c_usd
+            pmc_display_eur = row['pmc'] / c_usd
+        elif row['valuta'] == 'CHF':
+            inv_iniziale = row['q'] * row['pmc'] / c_chf
+            pmc_display_eur = row['pmc'] / c_chf
+        else:  # EUR
+            inv_iniziale = row['q'] * row['pmc']
+            pmc_display_eur = row['pmc']
         
         # --- PERFORMANCE IN %
-        if inv_iniziale > 0:
-            perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
-        else:
-            perf = 0
+        perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
         
-        return pd.Series([ctv_eur, spot_eur, pmc_eur, inv_iniziale, perf])
+        return pd.Series([ctv_eur, spot_eur, pmc_display_eur, inv_iniziale, perf])
 
     df[['Capitale_EUR', 'Spot_EUR', 'PMC_EUR', 'Investimento_Iniziale_EUR', 'Performance_%']] = df.apply(calcola_valori, axis=1)
     df['Peso_%'] = (df['Capitale_EUR'] / VALORE_TOTALE_PORTAFOGLIO_EUR) * 100
@@ -104,7 +110,7 @@ else:
         inv_tot = df['Investimento_Iniziale_EUR'].sum()
         st.metric(label="Investimento Iniziale", value=f"{inv_tot:,.2f} EUR")
     with col3:
-        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100 if inv_tot > 0 else 0
+        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100
         st.metric(label="Performance Totale", value=f"{perf_totale:+.2f}%")
     
     if st.button("🔐 Blocca / Esci"):
