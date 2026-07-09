@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
+from datetime import datetime, timedelta
+import requests
 
 # Configurazione della pagina ottimizzata per smartphone
 st.set_page_config(layout="wide", page_title="Centrale Volumetrica 2.0")
@@ -23,7 +25,7 @@ else:
     # --- MOTORE CONFIGURAZIONE DATI REAL ---
     VALORE_TOTALE_PORTAFOGLIO_EUR = 377036.06
     
-    @st.cache_data(ttl=300)  # Aggiorna i dati ogni 5 minuti se si ricarica la pagina
+    @st.cache_data(ttl=60)  # Aggiorna ogni minuto
     def scarica_dati_mercato():
         df_base = pd.DataFrame([
             {"ticker": "INTC", "nome": "Intel Corp.", "tipo": "Azione", "q": 550, "pmc": 118.84, "valuta": "USD"},
@@ -46,32 +48,44 @@ else:
             {"ticker": "AG3L.MI", "nome": "WisdomTree Silver 3x Daily", "tipo": "ETC/Leva", "q": 1150, "pmc": 12.70, "valuta": "EUR"}
         ])
         
-        tickers = df_base['ticker'].tolist()
+        # Scarica tassi di cambio
         try:
-            cambio_usd = yf.Ticker("EURUSD=X").fast_info['lastPrice']
-            cambio_chf = yf.Ticker("EURCHF=X").fast_info['lastPrice']
-            prezzi_live = yf.download(tickers, period="1d", progress=False)['Close'].iloc[-1].to_dict()
+            cambio_usd = yf.Ticker("EURUSD=X").history(period="1d")['Close'].iloc[-1]
+            cambio_chf = yf.Ticker("EURCHF=X").history(period="1d")['Close'].iloc[-1]
         except:
             cambio_usd, cambio_chf = 1.1440, 0.9224
-            prezzi_live = {}
-            
+        
+        # Scarica prezzi live con yfinance (più affidabile)
+        prezzi_live = {}
+        for ticker in df_base['ticker'].unique():
+            try:
+                data = yf.Ticker(ticker)
+                price = data.history(period="5d")['Close'].iloc[-1]
+                if not np.isnan(price) and price > 0:
+                    prezzi_live[ticker] = price
+                else:
+                    prezzi_live[ticker] = None
+            except:
+                prezzi_live[ticker] = None
+        
         return df_base, prezzi_live, cambio_usd, cambio_chf
 
     df, dati_live, c_usd, c_chf = scarica_dati_mercato()
 
     def calcola_valori(row):
-        spot_live = dati_live.get(row['ticker'], row['pmc'])
-        if np.isnan(spot_live) or spot_live == 0: 
+        spot_live = dati_live.get(row['ticker'])
+        
+        # Se yfinance fallisce, usa il PMC
+        if spot_live is None or np.isnan(spot_live) or spot_live == 0:
             spot_live = row['pmc']
         
         # --- CONVERSIONE PREZZI IN EUR ---
-        # Converti il prezzo spot nella valuta originale se necessario
         if row['valuta'] == 'USD':
             spot_eur = spot_live / c_usd
-            pmc_eur = row['pmc']  # PMC è già in USD, convertiamo dopo
+            pmc_eur = row['pmc'] / c_usd
         elif row['valuta'] == 'CHF':
             spot_eur = spot_live / c_chf
-            pmc_eur = row['pmc']  # PMC è già in CHF, convertiamo dopo
+            pmc_eur = row['pmc'] / c_chf
         else:  # EUR
             spot_eur = spot_live
             pmc_eur = row['pmc']
@@ -80,20 +94,15 @@ else:
         ctv_eur = row['q'] * spot_eur
         
         # --- CALCOLO INVESTIMENTO INIZIALE IN EUR ---
-        if row['valuta'] == 'USD':
-            inv_iniziale = row['q'] * row['pmc'] / c_usd
-            pmc_display_eur = row['pmc'] / c_usd
-        elif row['valuta'] == 'CHF':
-            inv_iniziale = row['q'] * row['pmc'] / c_chf
-            pmc_display_eur = row['pmc'] / c_chf
-        else:  # EUR
-            inv_iniziale = row['q'] * row['pmc']
-            pmc_display_eur = row['pmc']
+        inv_iniziale = row['q'] * pmc_eur
         
         # --- PERFORMANCE IN %
-        perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
+        if inv_iniziale > 0:
+            perf = ((ctv_eur - inv_iniziale) / inv_iniziale) * 100
+        else:
+            perf = 0
         
-        return pd.Series([ctv_eur, spot_eur, pmc_display_eur, inv_iniziale, perf])
+        return pd.Series([ctv_eur, spot_eur, pmc_eur, inv_iniziale, perf])
 
     df[['Capitale_EUR', 'Spot_EUR', 'PMC_EUR', 'Investimento_Iniziale_EUR', 'Performance_%']] = df.apply(calcola_valori, axis=1)
     df['Peso_%'] = (df['Capitale_EUR'] / VALORE_TOTALE_PORTAFOGLIO_EUR) * 100
@@ -110,7 +119,7 @@ else:
         inv_tot = df['Investimento_Iniziale_EUR'].sum()
         st.metric(label="Investimento Iniziale", value=f"{inv_tot:,.2f} EUR")
     with col3:
-        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100
+        perf_totale = ((df['Capitale_EUR'].sum() - inv_tot) / inv_tot) * 100 if inv_tot > 0 else 0
         st.metric(label="Performance Totale", value=f"{perf_totale:+.2f}%")
     
     if st.button("🔐 Blocca / Esci"):
